@@ -1,0 +1,210 @@
+AutoSpotting - a simple automated EC2 spot market bidder
+AWS Berlin Meetup
+16 Aug 2016
+Tags: AWS, golang, AutoScaling, EC2, Spot
+
+Cristian Măgherușan-Stanciu
+HERE, Berlin
+cristian.magherusan-stanciu@here.com
+https://github.com/cristim/autospotting
+@magheru_san
+
+* About me
+
+SysAdmin at HERE, Berlin - supporting [[https://wego.here.com]]
+
+- Background: networking, Linux, AWS, C/Shell/Perl/Ruby/Python
+- Passionate about automation
+- Spare-time gopher
+
+.image autospotting/I-love-golang.png
+
+* Agenda
+
+- Idea
+- Implementation details
+- Demo
+
+* Idea
+
+* AWS Spot Market Automation
+
+- First discussed on a previous AWS Berlin meet-up last year
+- Interesting problem to me when I first heard it
+- I decided to build it in Go in order to learn the language
+- Saw it show up a lot on recent meet-ups
+
+* AWS Spot Market - Intro
+
+Unused EC2 capacity sold to the highest paying bidders
+
+- Prices based on supply/demand
+- Considerable variation per region, instance type and even availability zone
+
+* AWS Spot Market - Typical Prices, Savings and Risks
+
+- Starts from 10% the on-demand price, peaks as high as 10x
+- Savings >80% of on-demand are common, or ~5x capacity for the same costs
+- But *spot*instances*are*terminated*with*a*2*minute*notice*when*outbid!!!*
+
+.image autospotting/m3.large-virginia-last-month.png
+.caption _m3.large_in_Virginia,_May_2016_
+
+* AWS Spot Market - Challenges
+
+- The application must be designed to allow sudden instance termination
+- Not applicable for everything
+
+
+* AWS Spot Market - Manual Bidding
+
+- Place static bids according to your strategy and hope for the best
+- Spread over multiple pricing zones
+- Carefully pick region, instance type and availability zone
+- The AWS Spot Bid Advisor may help
+
+.image autospotting/spot-bid-advisor.png _ 550
+.caption _AWS_Spot_Bid_Advisor_
+
+* AWS Spot Market - Automated Bidding
+
+AWS offers some basic tools
+
+- AutoScaling native integration - supports a single instance type
+- SpotFleet - entirely different API, has some limitations (scaling, ELB...)
+
+Many 3rd party & custom tools, of various degrees of maturity
+
+* My Solution - AutoSpotting
+
+* AutoSpotting
+
+Simple solution to reliably enough automate the use of the AWS spot market
+
+* Design Principles
+
+- Significant - but not necessarily the most aggressive - cost savings
+- Optimized for high (enough) availability
+- Easy to install and configure against already existing infrastructure
+- Designed for use with long-running instances in existing AutoScaling groups 
+- Opt-in/out on a per AutoScaling group basis
+- Rely as much as possible on AWS services for all the mission-critical stuff: leverage AutoScaling for replacement of instances, ELB integration, scaling
+- Graceful in case of most failures: no/minimal reliability impact 
+- Low cost overhead: Lambda free tier + small bandwidth costs
+- Auto-updates with minimal user intervention
+
+* Implementation details
+
+* Architecture
+
+.image autospotting/architecture.png _ 1000
+
+* Workflow - Request New Spot Instance
+
+.image autospotting/request-spot-instance.png _ 1000
+
+
+* Requested spot instances 
+
+As close as possible to the original on-demand ones
+
+- Always cheaper than the original on-demand instances
+- At least as much, but often more computing power: memory, CPU cores
+- Same configuration: AvailabilityZone, UserData, IAM roles, SecurityGroups, PV/HVM support, etc.
+- Similar or bigger disk volume configuration: EBS, Instance store, volume type/size/number 
+- Only considering mapped instance store volumes for the disk configuration
+- Generic: can replace any instance type with any other available instance type as long as the above are met
+- Spread over multiple instance types per Availability Zone when too risky
+
+* Workflow - Swapping Instances
+
+
+.image autospotting/swapping-instances.png _ 900
+
+* Workflow - Swapping Instances
+
+- After the spot instance has been running for long enough
+
+- Considered more than the group's grace period
+
+- Leverage recent AutoScaling features: Attach/Detach API calls to replace on-demand instances with the new spot ones
+
+
+* Workflow - Swapped Instances
+
+.image autospotting/swapped-instances.png _ 1000
+
+* Workflow - Terminate On-Demand Instance
+
+.image autospotting/terminate-on-demand-instance.png _ 1000
+
+* Workflow - Instance Replaced
+
+.image autospotting/instance-replaced.png _ 1000
+
+
+* Workflow - Final state
+
+Eventually there are no on-demand instances left in the group
+
+* Workflow - Final State
+
+.image autospotting/final-state.png _ 1000
+
+* More internal details
+
+- Replacement logic implemented in a static binary, stored in S3
+- A Lambda Python shim automatically updates to the latest binary and runs it
+- The Go program downloads data describing instance specs and on-demand pricing, compiled by ec2instances.info
+- Goroutines are then processing in parallel all the regions and enabled AutoScaling groups per region
+- The spot instance type and bid price are determined for each group, based on the on-demand running instances and current spot prices 
+- Instance replacement is performed as described in the workflow
+
+* High Availability
+
+Spot instance termination, when outbid
+
+- Handled by AutoScaling like any instance failure
+- AutoScaling will launch on-demand instances to compensate for lost capacity
+- Those will in turn be replaced with spot instances later, as per the workflow
+- Low likelihood of service downtime, with enough instance redundancy
+- Using another instance type when having more than 20% of the instances of the same type 
+- Still recommended to run in multiple regions
+
+* Deployment on a new AWS account
+
+- CloudFormation stack: awscli or one-clic launch in the browser
+- Enable/disable per AutoScaling group using a custom tag set on the group
+- Opt-in philosophy
+- Uninstallation: remove the CloudFormation stack
+
+* What's next?
+
+
+* Current challenges
+
+- Needs automated testing, currently I mostly do it manually
+- Automated testing needs some internal redesign (WIP)
+
+
+* Future Plans
+
+- Testing on more environments to iron out issues
+- Use information about termination likelihood from the Spot Bid Advisor
+- Make some parameters of the algorithm configurable
+- React on the 2min termination notice, with code running on spot instances
+- Allow keeping some on-demand capacity if configured
+- Redurce the runtime dependency on my infrastructure
+- Easier self-hosting
+- Support more Spot market products, not only Linux/UNIX
+- Investigate weighting of instance types
+
+
+* Conclusions
+
+- Spot instances are a great to save money
+- There are some trade-offs that make it incompatible with some use cases
+
+* Questions and Answers
+
+* Demo
